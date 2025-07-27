@@ -796,7 +796,7 @@ export default function MinijobSettingsPage() {
         </div>
       )}
 
-      {/* Messages */}
+      {/* Messages123 */}
       {message && (
         <div className={`fixed bottom-4 right-4 p-4 rounded-lg shadow-lg max-w-md border ${message.includes('✅')
           ? 'bg-green-50 border-green-200 text-green-800'
