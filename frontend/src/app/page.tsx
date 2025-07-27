@@ -28,24 +28,24 @@ export default function Home() {
     password: '',
     name: ''
   })
-  
+
   // Loading-State für Hydration
   const [isLoading, setIsLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
-// === NEU: Admin-States ===
-const [showAdminPanel, setShowAdminPanel] = useState(false)
-const [allUsers, setAllUsers] = useState<User[]>([])
-const [loadingUsers, setLoadingUsers] = useState(false)
-const [showCreateUser, setShowCreateUser] = useState(false)
-const [newUserForm, setNewUserForm] = useState<NewUser>({
-  name: '',
-  email: '',
-  password: '',
-  role: 'mitarbeiter'
-})
-const [adminMessage, setAdminMessage] = useState('')
+  // === NEU: Admin-States ===
+  const [showAdminPanel, setShowAdminPanel] = useState(false)
+  const [allUsers, setAllUsers] = useState<User[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [showCreateUser, setShowCreateUser] = useState(false)
+  const [newUserForm, setNewUserForm] = useState<NewUser>({
+    name: '',
+    email: '',
+    password: '',
+    role: 'mitarbeiter'
+  })
+  const [adminMessage, setAdminMessage] = useState('')
 
   // Check if user is logged in on component mount
   useEffect(() => {
@@ -70,10 +70,10 @@ const [adminMessage, setAdminMessage] = useState('')
     e.preventDefault()
     setLoading(true)
     setMessage('')
-    
+
     const endpoint = isLogin ? '/api/login' : '/api/register'
     const url = `http://localhost:5000${endpoint}`
-    
+
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -82,12 +82,12 @@ const [adminMessage, setAdminMessage] = useState('')
         },
         body: JSON.stringify(formData),
       })
-      
+
       const data = await response.json()
-      
+
       if (response.ok) {
         setMessage(`✅ ${data.message}`)
-        
+
         if (data.accessToken) {
           localStorage.setItem('accessToken', data.accessToken)
           localStorage.setItem('refreshToken', data.refreshToken)
@@ -121,16 +121,16 @@ const [adminMessage, setAdminMessage] = useState('')
 
   const testProtectedRoute = async () => {
     const token = localStorage.getItem('accessToken')
-    
+
     try {
       const response = await fetch('http://localhost:5000/api/profile', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       })
-      
+
       const data = await response.json()
-      
+
       if (response.ok) {
         setMessage(`Profil erfolgreich geladen: ${JSON.stringify(data, null, 2)}`)
       } else {
@@ -141,24 +141,24 @@ const [adminMessage, setAdminMessage] = useState('')
     }
   }
 
-// === ADMIN-FUNKTIONEN ===
+  // === ADMIN-FUNKTIONEN ===
 
   // Alle User laden (nur Admin)
   const loadAllUsers = async () => {
     setLoadingUsers(true)
     setAdminMessage('')
-    
+
     const token = localStorage.getItem('accessToken')
-    
+
     try {
       const response = await fetch('http://localhost:5000/api/admin/users', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       })
-      
+
       const data = await response.json()
-      
+
       if (response.ok) {
         setAllUsers(data.users)
         setAdminMessage(`✅ ${data.total} Benutzer geladen`)
@@ -177,9 +177,9 @@ const [adminMessage, setAdminMessage] = useState('')
     e.preventDefault()
     setLoading(true)
     setAdminMessage('')
-    
+
     const token = localStorage.getItem('accessToken')
-    
+
     try {
       const response = await fetch('http://localhost:5000/api/admin/users', {
         method: 'POST',
@@ -189,9 +189,9 @@ const [adminMessage, setAdminMessage] = useState('')
         },
         body: JSON.stringify(newUserForm),
       })
-      
+
       const data = await response.json()
-      
+
       if (response.ok) {
         setAdminMessage(`✅ ${data.message}`)
         setNewUserForm({ name: '', email: '', password: '', role: 'mitarbeiter' })
@@ -223,9 +223,9 @@ const [adminMessage, setAdminMessage] = useState('')
   const SchoppmannLogo = () => (
     <div className="flex flex-col items-center mb-6 sm:mb-8">
       <div className="mb-4 sm:mb-6">
-        <img 
-          src="/Schoppmann_Logo.png" 
-          alt="SCHOPPMANN Immobilien & Vermögensverwaltung" 
+        <img
+          src="/Schoppmann_Logo.png"
+          alt="SCHOPPMANN Immobilien & Vermögensverwaltung"
           className="w-36 sm:w-48 lg:w-56 h-auto"
         />
       </div>
@@ -250,14 +250,14 @@ const [adminMessage, setAdminMessage] = useState('')
       <div className="min-h-screen bg-gradient-to-br from-slate-100 via-stone-100 to-slate-200 flex items-center justify-center p-2 sm:p-4">
         <div className="bg-white rounded-lg shadow-xl w-full max-w-sm sm:max-w-lg p-6 sm:p-8 border border-slate-200 mx-2">
           <SchoppmannLogo />
-          
+
           <div className="text-center mb-6 sm:mb-8">
             <h2 className="text-xl sm:text-2xl font-semibold text-slate-700 mb-2">
               Willkommen im Portal
             </h2>
             <p className="text-sm sm:text-base text-slate-600">Verwaltungsbereich erfolgreich erreicht</p>
           </div>
-          
+
           <div className="space-y-4 sm:space-y-6">
             <div className="bg-slate-50 border border-slate-200 p-4 sm:p-6 rounded-lg">
               <h3 className="text-base sm:text-lg font-semibold text-slate-700 mb-3 sm:mb-4 flex items-center">
@@ -279,41 +279,100 @@ const [adminMessage, setAdminMessage] = useState('')
                 </div>
               </div>
             </div>
-            
-<button
-  onClick={testProtectedRoute}
-  className="w-full bg-slate-700 text-white font-semibold py-3 sm:py-4 px-4 sm:px-6 rounded-lg hover:bg-slate-800 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center text-sm sm:text-base"
->
-  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-  </svg>
-  Geschützte Daten abrufen
-</button>
 
-{/* === NEU: Admin-Buttons (nur für Admins) === */}
-{user?.role === 'admin' && (
-  <button
-    onClick={openAdminPanel}
-    className="w-full bg-blue-600 text-white font-semibold py-3 sm:py-4 px-4 sm:px-6 rounded-lg hover:bg-blue-700 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center text-sm sm:text-base"
-  >
-    <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-      <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z" />
-    </svg>
-    Benutzer verwalten
-  </button>
-)}
+            <button
+              onClick={testProtectedRoute}
+              className="w-full bg-slate-700 text-white font-semibold py-3 sm:py-4 px-4 sm:px-6 rounded-lg hover:bg-slate-800 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center text-sm sm:text-base"
+            >
+              <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+              </svg>
+              Geschützte Daten abrufen
+            </button>
 
-<button
-  onClick={handleLogout}
-  className="w-full bg-white border-2 border-slate-300 text-slate-700 font-semibold py-3 sm:py-4 px-4 sm:px-6 rounded-lg hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 flex items-center justify-center text-sm sm:text-base"
->
-  <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-    <path fillRule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clipRule="evenodd" />
-  </svg>
-  Abmelden
-</button>
+            {/* === NEU: Admin-Buttons (nur für Admins) === */}
+            {user?.role === 'admin' && (
+              <button
+                onClick={() => window.location.href = '/admin'}
+                className="w-full bg-blue-600 text-white font-semibold py-3 sm:py-4 px-4 sm:px-6 rounded-lg hover:bg-blue-700 transition-all duration-200 shadow-md hover:shadow-lg flex items-center justify-center text-sm sm:text-base"
+              >
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z" />
+                </svg>
+                Admin-Panel öffnen
+              </button>
+            )}
+
+            <button
+              onClick={handleLogout}
+              className="w-full bg-white border-2 border-slate-300 text-slate-700 font-semibold py-3 sm:py-4 px-4 sm:px-6 rounded-lg hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 flex items-center justify-center text-sm sm:text-base"
+            >
+              <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clipRule="evenodd" />
+              </svg>
+              Abmelden
+            </button>
           </div>
-          
+          {/* === ADMIN PANEL === */}
+          {showAdminPanel && user?.role === 'admin' && (
+            <div className="mt-6 p-6 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-blue-800">👥 Benutzer-Verwaltung</h3>
+                <button
+                  onClick={() => setShowAdminPanel(false)}
+                  className="text-blue-600 hover:text-blue-800 font-semibold"
+                >
+                  ✕ Schließen
+                </button>
+              </div>
+
+              {/* Neuen User erstellen Button */}
+              <div className="mb-4">
+                <button
+                  onClick={() => setShowCreateUser(true)}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  ➕ Neuen Benutzer erstellen
+                </button>
+              </div>
+
+              {/* User-Liste */}
+              <div className="space-y-2">
+                <h4 className="font-semibold text-gray-700">Alle Benutzer:</h4>
+                {loadingUsers ? (
+                  <p className="text-gray-600">Lade Benutzer...</p>
+                ) : (
+                  <div className="bg-white rounded border">
+                    {allUsers.map((u) => (
+                      <div key={u.id} className="flex justify-between items-center p-3 border-b last:border-b-0">
+                        <div>
+                          <span className="font-medium">{u.name}</span>
+                          <span className="text-gray-500 ml-2">({u.email})</span>
+                          <span className={`ml-2 px-2 py-1 rounded text-xs ${u.role === 'admin' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
+                            }`}>
+                            {u.role}
+                          </span>
+                        </div>
+                        <div className="text-gray-500 text-sm">
+                          ID: {u.id}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Admin Messages */}
+              {adminMessage && (
+                <div className={`mt-4 p-3 rounded ${adminMessage.includes('✅')
+                    ? 'bg-green-100 text-green-800'
+                    : 'bg-red-100 text-red-800'
+                  }`}>
+                  {adminMessage}
+                </div>
+              )}
+            </div>
+          )}
           {message && (
             <div className="mt-4 sm:mt-6 p-3 sm:p-4 bg-slate-100 border border-slate-200 rounded-lg">
               <pre className="whitespace-pre-wrap text-xs sm:text-sm text-slate-700 font-mono">{message}</pre>
@@ -329,7 +388,7 @@ const [adminMessage, setAdminMessage] = useState('')
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-stone-100 to-slate-200 flex items-center justify-center p-2 sm:p-4">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-sm sm:max-w-md p-6 sm:p-8 border border-slate-200 mx-2">
         <SchoppmannLogo />
-        
+
         <div className="text-center mb-6 sm:mb-8">
           <h2 className="text-xl sm:text-2xl font-semibold text-slate-700 mb-2">
             {isLogin ? 'Portal-Zugang' : 'Konto erstellen'}
@@ -338,7 +397,7 @@ const [adminMessage, setAdminMessage] = useState('')
             {isLogin ? 'Melden Sie sich in Ihrem Verwaltungsbereich an' : 'Erstellen Sie Ihren Zugang zum Verwaltungsportal'}
           </p>
         </div>
-        
+
         <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
           {!isLogin && (
             <div>
@@ -349,7 +408,7 @@ const [adminMessage, setAdminMessage] = useState('')
                 type="text"
                 placeholder="z.B. Max Mustermann"
                 value={formData.name}
-                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="w-full px-3 sm:px-4 py-2 sm:py-3 border-2 border-slate-300 rounded-lg focus:border-slate-500 focus:outline-none transition-colors text-slate-800 placeholder-slate-400 bg-white text-sm sm:text-base"
                 required
               />
@@ -358,7 +417,7 @@ const [adminMessage, setAdminMessage] = useState('')
               </p>
             </div>
           )}
-          
+
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">
               E-Mail-Adresse
@@ -367,12 +426,12 @@ const [adminMessage, setAdminMessage] = useState('')
               type="email"
               placeholder="ihre.email@unternehmen.de"
               value={formData.email}
-              onChange={(e) => setFormData({...formData, email: e.target.value})}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               className="w-full px-3 sm:px-4 py-2 sm:py-3 border-2 border-slate-300 rounded-lg focus:border-slate-500 focus:outline-none transition-colors text-slate-800 placeholder-slate-400 bg-white text-sm sm:text-base"
               required
             />
           </div>
-          
+
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">
               Passwort
@@ -381,7 +440,7 @@ const [adminMessage, setAdminMessage] = useState('')
               type="password"
               placeholder={isLogin ? "Ihr Passwort" : "Sicheres Passwort erstellen"}
               value={formData.password}
-              onChange={(e) => setFormData({...formData, password: e.target.value})}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               className="w-full px-3 sm:px-4 py-2 sm:py-3 border-2 border-slate-300 rounded-lg focus:border-slate-500 focus:outline-none transition-colors text-slate-800 placeholder-slate-400 bg-white text-sm sm:text-base"
               required
             />
@@ -391,7 +450,7 @@ const [adminMessage, setAdminMessage] = useState('')
               </p>
             )}
           </div>
-          
+
           <button
             type="submit"
             disabled={loading}
@@ -419,7 +478,7 @@ const [adminMessage, setAdminMessage] = useState('')
             )}
           </button>
         </form>
-        
+
         <div className="mt-6 sm:mt-8 pt-4 sm:pt-6 border-t border-slate-200 text-center">
           <p className="text-slate-600 mb-3 sm:mb-4 text-sm sm:text-base">
             {isLogin ? 'Noch kein Zugang?' : 'Bereits registriert?'}
@@ -435,17 +494,16 @@ const [adminMessage, setAdminMessage] = useState('')
             {isLogin ? 'Konto erstellen' : 'Zum Login'}
           </button>
         </div>
-        
+
         {message && (
-          <div className={`mt-4 sm:mt-6 p-3 sm:p-4 rounded-lg border ${
-            message.includes('✅') 
-              ? 'bg-green-50 border-green-200 text-green-800' 
+          <div className={`mt-4 sm:mt-6 p-3 sm:p-4 rounded-lg border ${message.includes('✅')
+              ? 'bg-green-50 border-green-200 text-green-800'
               : 'bg-red-50 border-red-200 text-red-800'
-          }`}>
+            }`}>
             <div className="text-xs sm:text-sm font-medium">{message}</div>
           </div>
         )}
-        
+
         <div className="mt-6 sm:mt-8 pt-3 sm:pt-4 border-t border-slate-200 text-center">
           <p className="text-xs text-slate-500">
             © 2024 SCHOPPMANN Immobilien &amp; Vermögensverwaltung
