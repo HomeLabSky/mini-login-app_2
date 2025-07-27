@@ -6,8 +6,8 @@ const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { Sequelize, Op } = require('sequelize'); // Op hinzufügen
-const { User, MinijobSetting, initDatabase } = require('./database');
+const { Sequelize, Op } = require('sequelize');
+const { User, MinijobSetting, initDatabase, sequelize } = require('./database'); // sequelize hinzugefügt
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -28,6 +28,7 @@ const generalLimiter = rateLimit({
   message: { error: 'Zu viele Anfragen.' }
 });
 
+// Sichere Datums-Funktion
 const getDateBefore = (dateString) => {
   const date = new Date(dateString + 'T00:00:00.000Z'); // UTC um Zeitzone-Probleme zu vermeiden
   date.setUTCDate(date.getUTCDate() - 1);
@@ -279,7 +280,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
     const users = await User.findAll({
       attributes: [
         'id', 'email', 'name', 'role', 'isActive', 'createdAt',
-        'stundenlohn', 'abrechnungStart', 'abrechnungEnde', 'lohnzettelEmail'  // NEU HINZUFÜGEN
+        'stundenlohn', 'abrechnungStart', 'abrechnungEnde', 'lohnzettelEmail'
       ],
       order: [['id', 'ASC']]
     });
@@ -582,7 +583,7 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       }
     }
 
-    // KORRIGIERT: Überschneidungsprüfung mit Op
+    // Überschneidungsprüfung mit Op
     const overlappingSettings = await MinijobSetting.findAll({
       where: {
         [Op.or]: [
@@ -619,7 +620,7 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       );
 
       if (overlappingSettings.length === 1 && previousUnlimitedSetting) {
-        // KORRIGIERT: Sichere Datums-Berechnung
+        // Sichere Datums-Berechnung
         const newEndDate = getDateBefore(fromDate);
 
         await previousUnlimitedSetting.update({
@@ -632,10 +633,13 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
           oldValidUntil: 'unbegrenzt',
           newValidUntil: newEndDate
         });
+
+        console.log(`🔄 Automatische Anpassung: Einstellung ${previousUnlimitedSetting.id} endet jetzt am ${newEndDate}`);
       } else {
         await transaction.rollback();
         return res.status(409).json({
           error: 'Zeitraum überschneidet sich mit bestehenden Einstellungen',
+          suggestion: 'Bitte überprüfen Sie die bestehenden Einstellungen und passen Sie diese gegebenenfalls an',
           conflictingSettings: overlappingSettings.map(s => ({
             id: s.id,
             validFrom: s.validFrom,
@@ -680,7 +684,7 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
   }
 });
 
-// Minijob-Einstellung bearbeiten (AKTUALISIERT)
+// Minijob-Einstellung bearbeiten
 app.put('/api/admin/minijob-settings/:id', requireAdmin, [
   body('monthlyLimit')
     .isFloat({ min: 0, max: 999999.99 })
@@ -745,7 +749,7 @@ app.put('/api/admin/minijob-settings/:id', requireAdmin, [
 
 // Minijob-Einstellung löschen (ERWEITERT mit Rückwärts-Anpassung)
 app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => {
-  const transaction = await sequelize.transaction(); // Transaktion starten
+  const transaction = await sequelize.transaction();
 
   try {
     const settingId = req.params.id;
@@ -768,7 +772,7 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
 
     let adjustedSettings = [];
 
-    // 1. Nachfolgende Einstellungen finden (KORRIGIERT: Op statt Sequelize.Op)
+    // 1. Nachfolgende Einstellungen finden
     const laterSettings = await MinijobSetting.findAll({
       where: {
         validFrom: { [Op.gt]: settingToDelete.validFrom },
@@ -778,7 +782,7 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
       transaction
     });
 
-    // 2. Vorherige Einstellung finden (KORRIGIERT: Op statt Sequelize.Op)
+    // 2. Vorherige Einstellung finden
     const previousSetting = await MinijobSetting.findOne({
       where: {
         validFrom: { [Op.lt]: settingToDelete.validFrom },
@@ -796,7 +800,7 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
       // Wenn es weitere Einstellungen NACH der zu löschenden gibt
       if (laterSettings.length > 0) {
         const nextSetting = laterSettings[0];
-        newValidUntil = getDateBefore(nextSetting.validFrom); // KORRIGIERT: Sichere Datums-Funktion
+        newValidUntil = getDateBefore(nextSetting.validFrom);
         adjustmentReason = `bis ${newValidUntil} (wegen nachfolgender Einstellung)`;
       }
 
@@ -825,6 +829,9 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
     await MinijobSetting.updateActiveStatus();
 
     console.log(`🗑️ Admin ${req.user.email} hat Minijob-Einstellung ${settingId} gelöscht`);
+    if (adjustedSettings.length > 0) {
+      console.log(`🔄 Automatische Rückwärts-Anpassung durchgeführt für ${adjustedSettings.length} Einstellung(en)`);
+    }
 
     const responseMessage = adjustedSettings.length > 0
       ? `Minijob-Einstellung erfolgreich gelöscht. Vorherige Einstellung wurde automatisch angepasst.`
@@ -841,7 +848,7 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
       adjustedSettings: adjustedSettings
     });
   } catch (error) {
-    await transaction.rollback(); // Rollback bei Fehler
+    await transaction.rollback();
     console.error('Fehler beim Löschen der Minijob-Einstellung:', error);
     res.status(500).json({ error: 'Minijob-Einstellung konnte nicht gelöscht werden' });
   }
@@ -871,7 +878,7 @@ app.post('/api/admin/minijob-settings/recalculate-periods', requireAdmin, async 
       let newValidUntil = null; // Standard: unbegrenzt
 
       if (nextSetting) {
-        // KORRIGIERT: Sichere Datums-Berechnung
+        // Sichere Datums-Berechnung
         newValidUntil = getDateBefore(nextSetting.validFrom);
       }
 
@@ -929,7 +936,7 @@ app.post('/api/admin/reset-database', requireAdmin, async (req, res) => {
     // 2. Alle User außer dem aktuellen Admin löschen
     await User.destroy({
       where: {
-        id: { [Sequelize.Op.ne]: req.user.userId }
+        id: { [Op.ne]: req.user.userId }
       }
     });
     console.log('✅ Alle User außer aktuellem Admin gelöscht');
@@ -1057,7 +1064,7 @@ app.post('/api/admin/minijob-settings/refresh-status', requireAdmin, async (req,
 });
 
 // ===== TEMPORÄRE ROUTE: Ersten Admin erstellen =====
-app.get('/api/create-first-admin', async (req, res) => {  // GET statt POST
+app.get('/api/create-first-admin', async (req, res) => {
   try {
     // Prüfen ob bereits ein Admin existiert
     const existingAdmin = await User.findOne({ where: { role: 'admin' } });
