@@ -6,8 +6,8 @@ const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { Sequelize } = require('sequelize'); // Für Operators
-const { User, MinijobSetting, initDatabase } = require('./database'); // ERWEITERT
+const { Sequelize, Op } = require('sequelize'); // Op hinzufügen
+const { User, MinijobSetting, initDatabase } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,6 +27,12 @@ const generalLimiter = rateLimit({
   max: 100,
   message: { error: 'Zu viele Anfragen.' }
 });
+
+const getDateBefore = (dateString) => {
+  const date = new Date(dateString + 'T00:00:00.000Z'); // UTC um Zeitzone-Probleme zu vermeiden
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().split('T')[0];
+};
 
 // CORS
 app.use(cors({
@@ -67,8 +73,8 @@ const validateLogin = [
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      error: 'Eingabefehler', 
+    return res.status(400).json({
+      error: 'Eingabefehler',
       details: errors.array().map(err => err.msg)
     });
   }
@@ -78,8 +84,8 @@ const handleValidationErrors = (req, res, next) => {
 // JWT Helper Functions mit Rollen-Support
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
-    { 
-      userId: user.id, 
+    {
+      userId: user.id,
       email: user.email,
       role: user.role,           // NEU: Rolle hinzufügen
       name: user.name            // NEU: Name hinzufügen
@@ -87,16 +93,16 @@ const generateTokens = (user) => {
     process.env.JWT_SECRET,
     { expiresIn: '15m' }
   );
-  
+
   const refreshToken = jwt.sign(
-    { 
+    {
       userId: user.id,
       role: user.role            // NEU: Rolle auch im Refresh Token
     },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: '7d' }
   );
-  
+
   return { accessToken, refreshToken };
 };
 
@@ -104,11 +110,11 @@ const generateTokens = (user) => {
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ error: 'Access Token erforderlich' });
   }
-  
+
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Ungültiger Token' });
@@ -123,24 +129,24 @@ const requireAdmin = (req, res, next) => {
   // Erst prüfen ob User eingeloggt ist
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ error: 'Access Token erforderlich' });
   }
-  
+
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Ungültiger Token' });
     }
-    
+
     // NEU: Admin-Rolle prüfen
     if (user.role !== 'admin') {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'Administratorrechte erforderlich',
-        userRole: user.role 
+        userRole: user.role
       });
     }
-    
+
     req.user = user;
     next();
   });
@@ -155,18 +161,18 @@ app.get('/api/test', (req, res) => {
 app.post('/api/register', validateRegistration, handleValidationErrors, async (req, res) => {
   try {
     const { email, password, name } = req.body;
-    
+
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
       return res.status(409).json({ error: 'Email bereits registriert' });
     }
-    
+
     const user = await User.create({ email, password, name });
     const { accessToken, refreshToken } = generateTokens(user);
-    
+
     console.log(`✅ Neue Registrierung: ${email}`);
-    
-    res.status(201).json({ 
+
+    res.status(201).json({
       message: 'Registrierung erfolgreich',
       accessToken,
       refreshToken,
@@ -182,33 +188,33 @@ app.post('/api/register', validateRegistration, handleValidationErrors, async (r
 app.post('/api/login', loginLimiter, validateLogin, handleValidationErrors, async (req, res) => {
   try {
     const { email, password } = req.body;
-    
+
     const user = await User.findOne({ where: { email } });
     if (!user) {
       return res.status(401).json({ error: 'Email oder Passwort falsch' });
     }
-    
+
     const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Email oder Passwort falsch' });
     }
-    
+
     const { accessToken, refreshToken } = generateTokens(user);
-    
+
     console.log(`✅ Login: ${email}`);
-    
+
     res.json({
-  message: 'Login erfolgreich',
-  accessToken,
-  refreshToken,
-  user: { 
-    id: user.id, 
-    email: user.email, 
-    name: user.name,
-    role: user.role,        // NEU: Rolle hinzufügen
-    isActive: user.isActive // NEU: Status hinzufügen
-  }
-});
+      message: 'Login erfolgreich',
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,        // NEU: Rolle hinzufügen
+        isActive: user.isActive // NEU: Status hinzufügen
+      }
+    });
   } catch (error) {
     console.error('Login Fehler:', error);
     res.status(500).json({ error: 'Login fehlgeschlagen' });
@@ -218,23 +224,23 @@ app.post('/api/login', loginLimiter, validateLogin, handleValidationErrors, asyn
 // TOKEN REFRESH
 app.post('/api/refresh', async (req, res) => {
   const { refreshToken } = req.body;
-  
+
   if (!refreshToken) {
     return res.status(401).json({ error: 'Refresh Token erforderlich' });
   }
-  
+
   try {
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await User.findByPk(decoded.userId);
-    
+
     if (!user || !user.isActive) {
       return res.status(403).json({ error: 'User nicht gefunden oder inaktiv' });
     }
-    
+
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
-    
+
     console.log(`🔄 Token refresh für ${user.email}`);
-    
+
     res.json({
       message: 'Token erfolgreich erneuert',
       accessToken,
@@ -277,9 +283,9 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
       ],
       order: [['id', 'ASC']]
     });
-    
+
     console.log(`📋 Admin ${req.user.email} hat User-Liste abgerufen`);
-    
+
     res.json({
       message: 'User-Liste erfolgreich geladen',
       users: users,
@@ -295,30 +301,30 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 app.post('/api/admin/users', requireAdmin, validateRegistration, handleValidationErrors, async (req, res) => {
   try {
     const { email, password, name, role = 'mitarbeiter' } = req.body;
-    
+
     // Prüfen ob User bereits existiert
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
       return res.status(409).json({ error: 'Email bereits registriert' });
     }
-    
+
     // Neuen User erstellen
-    const user = await User.create({ 
-      email, 
-      password, 
-      name, 
+    const user = await User.create({
+      email,
+      password,
+      name,
       role: role === 'admin' ? 'admin' : 'mitarbeiter',
       isActive: true
     });
-    
+
     console.log(`➕ Admin ${req.user.email} hat neuen User erstellt: ${email} (${role})`);
-    
-    res.status(201).json({ 
+
+    res.status(201).json({
       message: 'Benutzer erfolgreich erstellt',
-      user: { 
-        id: user.id, 
-        email: user.email, 
-        name: user.name, 
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
         role: user.role,
         isActive: user.isActive
       }
@@ -334,13 +340,13 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
     const { email, name, role, isActive, password } = req.body;
-    
+
     // User finden
     const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ error: 'Benutzer nicht gefunden' });
     }
-    
+
     // Email-Eindeutigkeit prüfen (falls Email geändert wird)
     if (email && email !== user.email) {
       const existingUser = await User.findOne({ where: { email } });
@@ -348,25 +354,25 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
         return res.status(409).json({ error: 'Email bereits vergeben' });
       }
     }
-    
+
     // Update-Objekt vorbereiten
     const updateData = {};
     if (email) updateData.email = email;
     if (name) updateData.name = name;
     if (role) updateData.role = role;
     if (typeof isActive === 'boolean') updateData.isActive = isActive;
-    
+
     // Passwort separat behandeln (falls angegeben)
     if (password && password.trim() !== '') {
       const hashedPassword = await bcrypt.hash(password, 10);
       updateData.password = hashedPassword;
     }
-    
+
     // User aktualisieren
     await user.update(updateData);
-    
+
     console.log(`✏️ Admin ${req.user.email} hat User ${user.email} bearbeitet`);
-    
+
     res.json({
       message: 'Benutzer erfolgreich aktualisiert',
       user: {
@@ -392,38 +398,38 @@ app.put('/api/admin/users/:id/settings', requireAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
     const { stundenlohn, abrechnungStart, abrechnungEnde, lohnzettelEmail } = req.body;
-    
+
     // User finden
     const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ error: 'Benutzer nicht gefunden' });
     }
-    
+
     // Validierung
     if (stundenlohn && (stundenlohn < 0 || stundenlohn > 999)) {
       return res.status(400).json({ error: 'Stundenlohn muss zwischen 0 und 999 Euro liegen' });
     }
-    
+
     if (abrechnungStart && (abrechnungStart < 1 || abrechnungStart > 31)) {
       return res.status(400).json({ error: 'Abrechnungsstart muss zwischen 1 und 31 liegen' });
     }
-    
+
     if (abrechnungEnde && (abrechnungEnde < 1 || abrechnungEnde > 31)) {
       return res.status(400).json({ error: 'Abrechnungsende muss zwischen 1 und 31 liegen' });
     }
-    
+
     // Update-Objekt vorbereiten
     const updateData = {};
     if (stundenlohn !== undefined) updateData.stundenlohn = parseFloat(stundenlohn);
     if (abrechnungStart !== undefined) updateData.abrechnungStart = parseInt(abrechnungStart);
     if (abrechnungEnde !== undefined) updateData.abrechnungEnde = parseInt(abrechnungEnde);
     if (lohnzettelEmail !== undefined) updateData.lohnzettelEmail = lohnzettelEmail || null;
-    
+
     // User-Einstellungen aktualisieren
     await user.update(updateData);
-    
+
     console.log(`⚙️ Admin ${req.user.email} hat Einstellungen für ${user.email} aktualisiert`);
-    
+
     res.json({
       message: 'Einstellungen erfolgreich aktualisiert',
       user: {
@@ -448,19 +454,19 @@ app.put('/api/admin/users/:id/settings', requireAdmin, async (req, res) => {
 app.patch('/api/admin/users/:id/toggle-status', requireAdmin, async (req, res) => {
   try {
     const userId = req.params.id;
-    
+
     // User finden
     const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ error: 'Benutzer nicht gefunden' });
     }
-    
+
     // Status umschalten
     const newStatus = !user.isActive;
     await user.update({ isActive: newStatus });
-    
+
     console.log(`🔄 Admin ${req.user.email} hat User ${user.email} ${newStatus ? 'aktiviert' : 'deaktiviert'}`);
-    
+
     res.json({
       message: `Benutzer erfolgreich ${newStatus ? 'aktiviert' : 'deaktiviert'}`,
       user: {
@@ -513,7 +519,7 @@ app.get('/api/admin/minijob-settings/current', requireAdmin, async (req, res) =>
     const currentSetting = await MinijobSetting.getCurrentSetting();
 
     if (!currentSetting) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Keine aktuelle Minijob-Einstellung gefunden',
         suggestion: 'Bitte erstellen Sie eine neue Einstellung'
       });
@@ -550,92 +556,86 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
     .toDate()
     .withMessage('Gültigkeit-Bis muss ein gültiges Datum sein oder leer bleiben')
 ], handleValidationErrors, async (req, res) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const { monthlyLimit, description, validFrom, validUntil } = req.body;
 
-    // Validierung: validFrom darf nicht in der Vergangenheit liegen (außer heute)
+    // Datum-Validierung
     const today = new Date().toISOString().split('T')[0];
     const fromDate = new Date(validFrom).toISOString().split('T')[0];
-    
+
     if (fromDate < today) {
-      return res.status(400).json({ 
-        error: 'Das Startdatum darf nicht in der Vergangenheit liegen' 
+      await transaction.rollback();
+      return res.status(400).json({
+        error: 'Das Startdatum darf nicht in der Vergangenheit liegen'
       });
     }
 
-    // Validierung: validUntil muss nach validFrom liegen (falls angegeben)
     if (validUntil) {
       const untilDate = new Date(validUntil).toISOString().split('T')[0];
       if (untilDate <= fromDate) {
-        return res.status(400).json({ 
-          error: 'Das Enddatum muss nach dem Startdatum liegen' 
+        await transaction.rollback();
+        return res.status(400).json({
+          error: 'Das Enddatum muss nach dem Startdatum liegen'
         });
       }
     }
 
-    // === NEUE LOGIK: Automatische Anpassung vorheriger Einstellungen ===
-    
-    // 1. Prüfen auf Überschneidungen mit bestehenden Einstellungen
+    // KORRIGIERT: Überschneidungsprüfung mit Op
     const overlappingSettings = await MinijobSetting.findAll({
       where: {
-        [Sequelize.Op.or]: [
+        [Op.or]: [
           // Neue Einstellung startet innerhalb einer bestehenden
           {
-            validFrom: { [Sequelize.Op.lte]: fromDate },
-            [Sequelize.Op.or]: [
+            validFrom: { [Op.lte]: fromDate },
+            [Op.or]: [
               { validUntil: null },
-              { validUntil: { [Sequelize.Op.gte]: fromDate } }
+              { validUntil: { [Op.gte]: fromDate } }
             ]
           },
-          // Neue Einstellung endet innerhalb einer bestehenden (nur wenn validUntil gesetzt)
+          // Weitere Prüfungen...
           validUntil ? {
-            validFrom: { [Sequelize.Op.lte]: validUntil },
-            [Sequelize.Op.or]: [
+            validFrom: { [Op.lte]: validUntil },
+            [Op.or]: [
               { validUntil: null },
-              { validUntil: { [Sequelize.Op.gte]: validUntil } }
+              { validUntil: { [Op.gte]: validUntil } }
             ]
           } : {},
-          // Bestehende Einstellung liegt komplett innerhalb der neuen
           validUntil ? {
-            validFrom: { [Sequelize.Op.gte]: fromDate },
-            validUntil: { [Sequelize.Op.lte]: validUntil }
+            validFrom: { [Op.gte]: fromDate },
+            validUntil: { [Op.lte]: validUntil }
           } : {}
         ]
-      }
+      },
+      transaction
     });
 
-    // 2. Intelligente Behandlung von Überschneidungen
     let autoAdjustedSettings = [];
-    
+
     if (overlappingSettings.length > 0) {
-      // Prüfen, ob es sich nur um eine vorherige unbegrenzte Einstellung handelt
-      const previousUnlimitedSetting = overlappingSettings.find(s => 
+      const previousUnlimitedSetting = overlappingSettings.find(s =>
         s.validUntil === null && s.validFrom < fromDate
       );
-      
+
       if (overlappingSettings.length === 1 && previousUnlimitedSetting) {
-        // AUTOMATISCHE ANPASSUNG: Vorherige unbegrenzte Einstellung beenden
-        const dayBeforeNewSetting = new Date(fromDate);
-        dayBeforeNewSetting.setDate(dayBeforeNewSetting.getDate() - 1);
-        const newEndDate = dayBeforeNewSetting.toISOString().split('T')[0];
-        
-        await previousUnlimitedSetting.update({ 
-          validUntil: newEndDate 
-        });
-        
+        // KORRIGIERT: Sichere Datums-Berechnung
+        const newEndDate = getDateBefore(fromDate);
+
+        await previousUnlimitedSetting.update({
+          validUntil: newEndDate
+        }, { transaction });
+
         autoAdjustedSettings.push({
           id: previousUnlimitedSetting.id,
           description: previousUnlimitedSetting.description,
           oldValidUntil: 'unbegrenzt',
           newValidUntil: newEndDate
         });
-        
-        console.log(`🔄 Automatische Anpassung: Einstellung ${previousUnlimitedSetting.id} endet jetzt am ${newEndDate}`);
       } else {
-        // Komplexere Überschneidungen - Benutzer muss manuell entscheiden
+        await transaction.rollback();
         return res.status(409).json({
           error: 'Zeitraum überschneidet sich mit bestehenden Einstellungen',
-          suggestion: 'Bitte überprüfen Sie die bestehenden Einstellungen und passen Sie diese gegebenenfalls an',
           conflictingSettings: overlappingSettings.map(s => ({
             id: s.id,
             validFrom: s.validFrom,
@@ -647,22 +647,24 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       }
     }
 
-    // 3. Neue Einstellung erstellen (validUntil bleibt null wenn nicht explizit gesetzt)
+    // Neue Einstellung erstellen
     const newSetting = await MinijobSetting.create({
       monthlyLimit: parseFloat(monthlyLimit),
       description,
       validFrom: fromDate,
       validUntil: validUntil ? new Date(validUntil).toISOString().split('T')[0] : null,
       createdBy: req.user.userId
-    });
+    }, { transaction });
 
-    // 4. Aktive Einstellungen aktualisieren
+    // Transaktion committen
+    await transaction.commit();
+
+    // Aktive Einstellungen aktualisieren
     await MinijobSetting.updateActiveStatus();
 
     console.log(`➕ Admin ${req.user.email} hat neue Minijob-Einstellung erstellt: ${monthlyLimit}€ ab ${fromDate}`);
 
-    // 5. Antwort mit Info über automatische Anpassungen
-    const responseMessage = autoAdjustedSettings.length > 0 
+    const responseMessage = autoAdjustedSettings.length > 0
       ? `Minijob-Einstellung erfolgreich erstellt. Vorherige Einstellung wurde automatisch angepasst.`
       : 'Minijob-Einstellung erfolgreich erstellt';
 
@@ -672,6 +674,7 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       autoAdjustedSettings: autoAdjustedSettings
     });
   } catch (error) {
+    await transaction.rollback();
     console.error('Fehler beim Erstellen der Minijob-Einstellung:', error);
     res.status(500).json({ error: 'Minijob-Einstellung konnte nicht erstellt werden' });
   }
@@ -707,12 +710,12 @@ app.put('/api/admin/minijob-settings/:id', requireAdmin, [
 
     // Datum-Validierung
     const fromDate = new Date(validFrom).toISOString().split('T')[0];
-    
+
     if (validUntil) {
       const untilDate = new Date(validUntil).toISOString().split('T')[0];
       if (untilDate <= fromDate) {
-        return res.status(400).json({ 
-          error: 'Das Enddatum muss nach dem Startdatum liegen' 
+        return res.status(400).json({
+          error: 'Das Enddatum muss nach dem Startdatum liegen'
         });
       }
     }
@@ -742,43 +745,47 @@ app.put('/api/admin/minijob-settings/:id', requireAdmin, [
 
 // Minijob-Einstellung löschen (ERWEITERT mit Rückwärts-Anpassung)
 app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => {
+  const transaction = await sequelize.transaction(); // Transaktion starten
+
   try {
     const settingId = req.params.id;
     const today = new Date().toISOString().split('T')[0];
 
-    const settingToDelete = await MinijobSetting.findByPk(settingId);
+    const settingToDelete = await MinijobSetting.findByPk(settingId, { transaction });
     if (!settingToDelete) {
+      await transaction.rollback();
       return res.status(404).json({ error: 'Minijob-Einstellung nicht gefunden' });
     }
 
     // Nur zukünftige Einstellungen dürfen gelöscht werden
     if (settingToDelete.validFrom <= today) {
-      return res.status(400).json({ 
+      await transaction.rollback();
+      return res.status(400).json({
         error: 'Aktive oder vergangene Einstellungen können nicht gelöscht werden',
         suggestion: 'Bearbeiten Sie die Einstellung oder erstellen Sie eine neue'
       });
     }
 
-    // === NEUE LOGIK: Intelligente Rückwärts-Anpassung ===
-    
     let adjustedSettings = [];
-    
-    // 1. Prüfen, ob es nach der zu löschenden Einstellung weitere gibt
+
+    // 1. Nachfolgende Einstellungen finden (KORRIGIERT: Op statt Sequelize.Op)
     const laterSettings = await MinijobSetting.findAll({
       where: {
-        validFrom: { [Sequelize.Op.gt]: settingToDelete.validFrom },
-        id: { [Sequelize.Op.ne]: settingId }
+        validFrom: { [Op.gt]: settingToDelete.validFrom },
+        id: { [Op.ne]: settingId }
       },
-      order: [['validFrom', 'ASC']]
+      order: [['validFrom', 'ASC']],
+      transaction
     });
 
-    // 2. Vorherige Einstellung finden (die direkt vor der zu löschenden)
+    // 2. Vorherige Einstellung finden (KORRIGIERT: Op statt Sequelize.Op)
     const previousSetting = await MinijobSetting.findOne({
       where: {
-        validFrom: { [Sequelize.Op.lt]: settingToDelete.validFrom },
-        id: { [Sequelize.Op.ne]: settingId }
+        validFrom: { [Op.lt]: settingToDelete.validFrom },
+        id: { [Op.ne]: settingId }
       },
-      order: [['validFrom', 'DESC']]
+      order: [['validFrom', 'DESC']],
+      transaction
     });
 
     // 3. Intelligente Anpassung der vorherigen Einstellung
@@ -788,16 +795,14 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
 
       // Wenn es weitere Einstellungen NACH der zu löschenden gibt
       if (laterSettings.length > 0) {
-        const nextSetting = laterSettings[0]; // Die nächste chronologische Einstellung
-        const dayBeforeNext = new Date(nextSetting.validFrom);
-        dayBeforeNext.setDate(dayBeforeNext.getDate() - 1);
-        newValidUntil = dayBeforeNext.toISOString().split('T')[0];
+        const nextSetting = laterSettings[0];
+        newValidUntil = getDateBefore(nextSetting.validFrom); // KORRIGIERT: Sichere Datums-Funktion
         adjustmentReason = `bis ${newValidUntil} (wegen nachfolgender Einstellung)`;
       }
 
       // Vorherige Einstellung anpassen
       const oldValidUntil = previousSetting.validUntil;
-      await previousSetting.update({ validUntil: newValidUntil });
+      await previousSetting.update({ validUntil: newValidUntil }, { transaction });
 
       adjustedSettings.push({
         id: previousSetting.id,
@@ -811,18 +816,17 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
     }
 
     // 4. Die gewählte Einstellung löschen
-    await settingToDelete.destroy();
+    await settingToDelete.destroy({ transaction });
 
-    // 5. Aktive Einstellungen aktualisieren
+    // 5. Transaktion committen
+    await transaction.commit();
+
+    // 6. Aktive Einstellungen aktualisieren (nach Commit)
     await MinijobSetting.updateActiveStatus();
 
     console.log(`🗑️ Admin ${req.user.email} hat Minijob-Einstellung ${settingId} gelöscht`);
-    if (adjustedSettings.length > 0) {
-      console.log(`🔄 Automatische Rückwärts-Anpassung durchgeführt für ${adjustedSettings.length} Einstellung(en)`);
-    }
 
-    // 6. Erweiterte Antwort mit Anpassungsinfos
-    const responseMessage = adjustedSettings.length > 0 
+    const responseMessage = adjustedSettings.length > 0
       ? `Minijob-Einstellung erfolgreich gelöscht. Vorherige Einstellung wurde automatisch angepasst.`
       : 'Minijob-Einstellung erfolgreich gelöscht';
 
@@ -837,6 +841,7 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
       adjustedSettings: adjustedSettings
     });
   } catch (error) {
+    await transaction.rollback(); // Rollback bei Fehler
     console.error('Fehler beim Löschen der Minijob-Einstellung:', error);
     res.status(500).json({ error: 'Minijob-Einstellung konnte nicht gelöscht werden' });
   }
@@ -844,12 +849,15 @@ app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => 
 
 // Alle Minijob-Zeiträume neu berechnen und korrigieren
 app.post('/api/admin/minijob-settings/recalculate-periods', requireAdmin, async (req, res) => {
+  const transaction = await sequelize.transaction();
+
   try {
     console.log(`🔄 Admin ${req.user.email} startet Neuberechnung aller Minijob-Zeiträume`);
 
     // Alle Einstellungen chronologisch abrufen
     const allSettings = await MinijobSetting.findAll({
-      order: [['validFrom', 'ASC']]
+      order: [['validFrom', 'ASC']],
+      transaction
     });
 
     let adjustedCount = 0;
@@ -859,22 +867,24 @@ app.post('/api/admin/minijob-settings/recalculate-periods', requireAdmin, async 
     for (let i = 0; i < allSettings.length; i++) {
       const currentSetting = allSettings[i];
       const nextSetting = allSettings[i + 1];
-      
+
       let newValidUntil = null; // Standard: unbegrenzt
-      
+
       if (nextSetting) {
-        // Es gibt eine nachfolgende Einstellung
-        const dayBeforeNext = new Date(nextSetting.validFrom);
-        dayBeforeNext.setDate(dayBeforeNext.getDate() - 1);
-        newValidUntil = dayBeforeNext.toISOString().split('T')[0];
+        // KORRIGIERT: Sichere Datums-Berechnung
+        newValidUntil = getDateBefore(nextSetting.validFrom);
       }
-      
+
       // Nur aktualisieren wenn sich etwas geändert hat
       const oldValidUntil = currentSetting.validUntil;
-      if (oldValidUntil !== newValidUntil) {
-        await currentSetting.update({ validUntil: newValidUntil });
+      const hasChanged = (oldValidUntil === null && newValidUntil !== null) ||
+        (oldValidUntil !== null && newValidUntil === null) ||
+        (oldValidUntil !== newValidUntil);
+
+      if (hasChanged) {
+        await currentSetting.update({ validUntil: newValidUntil }, { transaction });
         adjustedCount++;
-        
+
         adjustments.push({
           id: currentSetting.id,
           description: currentSetting.description,
@@ -885,7 +895,10 @@ app.post('/api/admin/minijob-settings/recalculate-periods', requireAdmin, async 
       }
     }
 
-    // Aktive Einstellungen aktualisieren
+    // Transaktion committen
+    await transaction.commit();
+
+    // Aktive Einstellungen aktualisieren (nach Commit)
     await MinijobSetting.updateActiveStatus();
 
     console.log(`✅ Neuberechnung abgeschlossen: ${adjustedCount} Einstellungen angepasst`);
@@ -896,6 +909,7 @@ app.post('/api/admin/minijob-settings/recalculate-periods', requireAdmin, async 
       adjustments: adjustments
     });
   } catch (error) {
+    await transaction.rollback();
     console.error('Fehler bei der Neuberechnung:', error);
     res.status(500).json({ error: 'Neuberechnung fehlgeschlagen' });
   }
@@ -907,19 +921,19 @@ app.post('/api/admin/minijob-settings/recalculate-periods', requireAdmin, async 
 app.post('/api/admin/reset-database', requireAdmin, async (req, res) => {
   try {
     console.log(`🔄 Admin ${req.user.email} startet Database Reset...`);
-    
+
     // 1. Alle Minijob-Einstellungen löschen
     await MinijobSetting.destroy({ where: {} });
     console.log('✅ Alle Minijob-Einstellungen gelöscht');
-    
+
     // 2. Alle User außer dem aktuellen Admin löschen
-    await User.destroy({ 
-      where: { 
-        id: { [Sequelize.Op.ne]: req.user.userId } 
-      } 
+    await User.destroy({
+      where: {
+        id: { [Sequelize.Op.ne]: req.user.userId }
+      }
     });
     console.log('✅ Alle User außer aktuellem Admin gelöscht');
-    
+
     // 3. Aktuellen Admin auf Standard-Werte zurücksetzen (optional)
     const currentAdmin = await User.findByPk(req.user.userId);
     if (currentAdmin) {
@@ -931,7 +945,7 @@ app.post('/api/admin/reset-database', requireAdmin, async (req, res) => {
       });
       console.log('✅ Admin-Einstellungen auf Standard zurückgesetzt');
     }
-    
+
     // 4. Standard Minijob-Einstellung erstellen
     const standardMinijobSetting = await MinijobSetting.create({
       monthlyLimit: 538.00,
@@ -941,12 +955,12 @@ app.post('/api/admin/reset-database', requireAdmin, async (req, res) => {
       createdBy: req.user.userId
     });
     console.log('✅ Standard Minijob-Einstellung erstellt');
-    
+
     // 5. Aktive Einstellungen aktualisieren
     await MinijobSetting.updateActiveStatus();
-    
+
     console.log(`🎉 Database Reset abgeschlossen von Admin ${req.user.email}`);
-    
+
     res.json({
       message: 'Datenbank erfolgreich zurückgesetzt',
       details: {
@@ -964,9 +978,9 @@ app.post('/api/admin/reset-database', requireAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Fehler beim Database Reset:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Database Reset fehlgeschlagen',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -974,22 +988,22 @@ app.post('/api/admin/reset-database', requireAdmin, async (req, res) => {
 // SICHERE DATABASE RESET ROUTE MIT BESTÄTIGUNG
 app.post('/api/admin/reset-database-confirm', requireAdmin, async (req, res) => {
   const { confirmation } = req.body;
-  
+
   // Sicherheitsbestätigung erforderlich
   if (confirmation !== 'RESET_ALL_DATA_CONFIRM') {
-    return res.status(400).json({ 
+    return res.status(400).json({
       error: 'Bestätigung erforderlich',
-      requiredConfirmation: 'RESET_ALL_DATA_CONFIRM' 
+      requiredConfirmation: 'RESET_ALL_DATA_CONFIRM'
     });
   }
-  
+
   try {
     console.log(`🔄 BESTÄTIGTER Database Reset von Admin ${req.user.email}`);
-    
+
     // Alle Tabellen leeren
     await MinijobSetting.destroy({ where: {} });
     await User.destroy({ where: {} });
-    
+
     // Neuen Admin erstellen
     const newAdmin = await User.create({
       email: 'admin@schoppmann.de',
@@ -998,7 +1012,7 @@ app.post('/api/admin/reset-database-confirm', requireAdmin, async (req, res) => 
       role: 'admin',
       isActive: true
     });
-    
+
     // Standard Minijob-Einstellung
     await MinijobSetting.create({
       monthlyLimit: 538.00,
@@ -1007,11 +1021,11 @@ app.post('/api/admin/reset-database-confirm', requireAdmin, async (req, res) => 
       validUntil: null,
       createdBy: newAdmin.id
     });
-    
+
     await MinijobSetting.updateActiveStatus();
-    
+
     console.log('🎉 Kompletter Database Reset mit neuem Admin abgeschlossen');
-    
+
     res.json({
       message: 'Datenbank komplett zurückgesetzt - Bitte erneut einloggen',
       newAdminCredentials: {
@@ -1048,7 +1062,7 @@ app.get('/api/create-first-admin', async (req, res) => {  // GET statt POST
     // Prüfen ob bereits ein Admin existiert
     const existingAdmin = await User.findOne({ where: { role: 'admin' } });
     if (existingAdmin) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Admin bereits vorhanden',
         existingAdmin: {
           email: existingAdmin.email,
@@ -1057,7 +1071,7 @@ app.get('/api/create-first-admin', async (req, res) => {  // GET statt POST
         }
       });
     }
-    
+
     // Ersten Admin erstellen
     const admin = await User.create({
       email: 'admin@schoppmann.de',
@@ -1066,9 +1080,9 @@ app.get('/api/create-first-admin', async (req, res) => {  // GET statt POST
       role: 'admin',
       isActive: true
     });
-    
+
     console.log('🔑 Erster Admin wurde erstellt!');
-    
+
     res.json({
       message: 'Erster Admin erfolgreich erstellt',
       admin: {
