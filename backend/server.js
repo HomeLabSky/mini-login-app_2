@@ -531,7 +531,7 @@ app.get('/api/admin/minijob-settings/current', requireAdmin, async (req, res) =>
   }
 });
 
-// Neue Minijob-Einstellung erstellen
+// Neue Minijob-Einstellung erstellen (ERWEITERTE VERSION)
 app.post('/api/admin/minijob-settings', requireAdmin, [
   body('monthlyLimit')
     .isFloat({ min: 0, max: 999999.99 })
@@ -563,7 +563,7 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       });
     }
 
-    // Validierung: validUntil muss nach validFrom liegen
+    // Validierung: validUntil muss nach validFrom liegen (falls angegeben)
     if (validUntil) {
       const untilDate = new Date(validUntil).toISOString().split('T')[0];
       if (untilDate <= fromDate) {
@@ -573,7 +573,9 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       }
     }
 
-    // Prüfen auf Überschneidungen mit bestehenden Einstellungen
+    // === NEUE LOGIK: Automatische Anpassung vorheriger Einstellungen ===
+    
+    // 1. Prüfen auf Überschneidungen mit bestehenden Einstellungen
     const overlappingSettings = await MinijobSetting.findAll({
       where: {
         [Sequelize.Op.or]: [
@@ -602,19 +604,50 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       }
     });
 
+    // 2. Intelligente Behandlung von Überschneidungen
+    let autoAdjustedSettings = [];
+    
     if (overlappingSettings.length > 0) {
-      return res.status(409).json({
-        error: 'Zeitraum überschneidet sich mit bestehenden Einstellungen',
-        conflictingSettings: overlappingSettings.map(s => ({
-          id: s.id,
-          validFrom: s.validFrom,
-          validUntil: s.validUntil,
-          description: s.description
-        }))
-      });
+      // Prüfen, ob es sich nur um eine vorherige unbegrenzte Einstellung handelt
+      const previousUnlimitedSetting = overlappingSettings.find(s => 
+        s.validUntil === null && s.validFrom < fromDate
+      );
+      
+      if (overlappingSettings.length === 1 && previousUnlimitedSetting) {
+        // AUTOMATISCHE ANPASSUNG: Vorherige unbegrenzte Einstellung beenden
+        const dayBeforeNewSetting = new Date(fromDate);
+        dayBeforeNewSetting.setDate(dayBeforeNewSetting.getDate() - 1);
+        const newEndDate = dayBeforeNewSetting.toISOString().split('T')[0];
+        
+        await previousUnlimitedSetting.update({ 
+          validUntil: newEndDate 
+        });
+        
+        autoAdjustedSettings.push({
+          id: previousUnlimitedSetting.id,
+          description: previousUnlimitedSetting.description,
+          oldValidUntil: 'unbegrenzt',
+          newValidUntil: newEndDate
+        });
+        
+        console.log(`🔄 Automatische Anpassung: Einstellung ${previousUnlimitedSetting.id} endet jetzt am ${newEndDate}`);
+      } else {
+        // Komplexere Überschneidungen - Benutzer muss manuell entscheiden
+        return res.status(409).json({
+          error: 'Zeitraum überschneidet sich mit bestehenden Einstellungen',
+          suggestion: 'Bitte überprüfen Sie die bestehenden Einstellungen und passen Sie diese gegebenenfalls an',
+          conflictingSettings: overlappingSettings.map(s => ({
+            id: s.id,
+            validFrom: s.validFrom,
+            validUntil: s.validUntil,
+            description: s.description,
+            monthlyLimit: s.monthlyLimit
+          }))
+        });
+      }
     }
 
-    // Neue Einstellung erstellen
+    // 3. Neue Einstellung erstellen (validUntil bleibt null wenn nicht explizit gesetzt)
     const newSetting = await MinijobSetting.create({
       monthlyLimit: parseFloat(monthlyLimit),
       description,
@@ -623,14 +656,20 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
       createdBy: req.user.userId
     });
 
-    // Aktive Einstellungen aktualisieren
+    // 4. Aktive Einstellungen aktualisieren
     await MinijobSetting.updateActiveStatus();
 
     console.log(`➕ Admin ${req.user.email} hat neue Minijob-Einstellung erstellt: ${monthlyLimit}€ ab ${fromDate}`);
 
+    // 5. Antwort mit Info über automatische Anpassungen
+    const responseMessage = autoAdjustedSettings.length > 0 
+      ? `Minijob-Einstellung erfolgreich erstellt. Vorherige Einstellung wurde automatisch angepasst.`
+      : 'Minijob-Einstellung erfolgreich erstellt';
+
     res.status(201).json({
-      message: 'Minijob-Einstellung erfolgreich erstellt',
-      setting: newSetting
+      message: responseMessage,
+      setting: newSetting,
+      autoAdjustedSettings: autoAdjustedSettings
     });
   } catch (error) {
     console.error('Fehler beim Erstellen der Minijob-Einstellung:', error);
@@ -638,7 +677,7 @@ app.post('/api/admin/minijob-settings', requireAdmin, [
   }
 });
 
-// Minijob-Einstellung bearbeiten
+// Minijob-Einstellung bearbeiten (AKTUALISIERT)
 app.put('/api/admin/minijob-settings/:id', requireAdmin, [
   body('monthlyLimit')
     .isFloat({ min: 0, max: 999999.99 })
@@ -678,7 +717,7 @@ app.put('/api/admin/minijob-settings/:id', requireAdmin, [
       }
     }
 
-    // Aktualisieren
+    // Aktualisieren (validUntil wird auf null gesetzt wenn leer)
     await setting.update({
       monthlyLimit: parseFloat(monthlyLimit),
       description,
@@ -701,35 +740,288 @@ app.put('/api/admin/minijob-settings/:id', requireAdmin, [
   }
 });
 
-// Minijob-Einstellung löschen (nur zukünftige)
+// Minijob-Einstellung löschen (ERWEITERT mit Rückwärts-Anpassung)
 app.delete('/api/admin/minijob-settings/:id', requireAdmin, async (req, res) => {
   try {
     const settingId = req.params.id;
     const today = new Date().toISOString().split('T')[0];
 
-    const setting = await MinijobSetting.findByPk(settingId);
-    if (!setting) {
+    const settingToDelete = await MinijobSetting.findByPk(settingId);
+    if (!settingToDelete) {
       return res.status(404).json({ error: 'Minijob-Einstellung nicht gefunden' });
     }
 
     // Nur zukünftige Einstellungen dürfen gelöscht werden
-    if (setting.validFrom <= today) {
+    if (settingToDelete.validFrom <= today) {
       return res.status(400).json({ 
         error: 'Aktive oder vergangene Einstellungen können nicht gelöscht werden',
         suggestion: 'Bearbeiten Sie die Einstellung oder erstellen Sie eine neue'
       });
     }
 
-    await setting.destroy();
+    // === NEUE LOGIK: Intelligente Rückwärts-Anpassung ===
+    
+    let adjustedSettings = [];
+    
+    // 1. Prüfen, ob es nach der zu löschenden Einstellung weitere gibt
+    const laterSettings = await MinijobSetting.findAll({
+      where: {
+        validFrom: { [Sequelize.Op.gt]: settingToDelete.validFrom },
+        id: { [Sequelize.Op.ne]: settingId }
+      },
+      order: [['validFrom', 'ASC']]
+    });
 
-    console.log(`🗑️ Admin ${req.user.email} hat zukünftige Minijob-Einstellung ${settingId} gelöscht`);
+    // 2. Vorherige Einstellung finden (die direkt vor der zu löschenden)
+    const previousSetting = await MinijobSetting.findOne({
+      where: {
+        validFrom: { [Sequelize.Op.lt]: settingToDelete.validFrom },
+        id: { [Sequelize.Op.ne]: settingId }
+      },
+      order: [['validFrom', 'DESC']]
+    });
+
+    // 3. Intelligente Anpassung der vorherigen Einstellung
+    if (previousSetting) {
+      let newValidUntil = null; // Standard: unbegrenzt
+      let adjustmentReason = 'unbegrenzt (keine weitere Einstellung)';
+
+      // Wenn es weitere Einstellungen NACH der zu löschenden gibt
+      if (laterSettings.length > 0) {
+        const nextSetting = laterSettings[0]; // Die nächste chronologische Einstellung
+        const dayBeforeNext = new Date(nextSetting.validFrom);
+        dayBeforeNext.setDate(dayBeforeNext.getDate() - 1);
+        newValidUntil = dayBeforeNext.toISOString().split('T')[0];
+        adjustmentReason = `bis ${newValidUntil} (wegen nachfolgender Einstellung)`;
+      }
+
+      // Vorherige Einstellung anpassen
+      const oldValidUntil = previousSetting.validUntil;
+      await previousSetting.update({ validUntil: newValidUntil });
+
+      adjustedSettings.push({
+        id: previousSetting.id,
+        description: previousSetting.description,
+        oldValidUntil: oldValidUntil || 'unbegrenzt',
+        newValidUntil: newValidUntil || 'unbegrenzt',
+        reason: adjustmentReason
+      });
+
+      console.log(`🔄 Rückwärts-Anpassung: Einstellung ${previousSetting.id} von "${oldValidUntil || 'unbegrenzt'}" auf "${newValidUntil || 'unbegrenzt'}" geändert`);
+    }
+
+    // 4. Die gewählte Einstellung löschen
+    await settingToDelete.destroy();
+
+    // 5. Aktive Einstellungen aktualisieren
+    await MinijobSetting.updateActiveStatus();
+
+    console.log(`🗑️ Admin ${req.user.email} hat Minijob-Einstellung ${settingId} gelöscht`);
+    if (adjustedSettings.length > 0) {
+      console.log(`🔄 Automatische Rückwärts-Anpassung durchgeführt für ${adjustedSettings.length} Einstellung(en)`);
+    }
+
+    // 6. Erweiterte Antwort mit Anpassungsinfos
+    const responseMessage = adjustedSettings.length > 0 
+      ? `Minijob-Einstellung erfolgreich gelöscht. Vorherige Einstellung wurde automatisch angepasst.`
+      : 'Minijob-Einstellung erfolgreich gelöscht';
 
     res.json({
-      message: 'Minijob-Einstellung erfolgreich gelöscht'
+      message: responseMessage,
+      deletedSetting: {
+        id: settingToDelete.id,
+        description: settingToDelete.description,
+        validFrom: settingToDelete.validFrom,
+        validUntil: settingToDelete.validUntil
+      },
+      adjustedSettings: adjustedSettings
     });
   } catch (error) {
     console.error('Fehler beim Löschen der Minijob-Einstellung:', error);
     res.status(500).json({ error: 'Minijob-Einstellung konnte nicht gelöscht werden' });
+  }
+});
+
+// Alle Minijob-Zeiträume neu berechnen und korrigieren
+app.post('/api/admin/minijob-settings/recalculate-periods', requireAdmin, async (req, res) => {
+  try {
+    console.log(`🔄 Admin ${req.user.email} startet Neuberechnung aller Minijob-Zeiträume`);
+
+    // Alle Einstellungen chronologisch abrufen
+    const allSettings = await MinijobSetting.findAll({
+      order: [['validFrom', 'ASC']]
+    });
+
+    let adjustedCount = 0;
+    const adjustments = [];
+
+    // Durch alle Einstellungen iterieren und Zeiträume korrigieren
+    for (let i = 0; i < allSettings.length; i++) {
+      const currentSetting = allSettings[i];
+      const nextSetting = allSettings[i + 1];
+      
+      let newValidUntil = null; // Standard: unbegrenzt
+      
+      if (nextSetting) {
+        // Es gibt eine nachfolgende Einstellung
+        const dayBeforeNext = new Date(nextSetting.validFrom);
+        dayBeforeNext.setDate(dayBeforeNext.getDate() - 1);
+        newValidUntil = dayBeforeNext.toISOString().split('T')[0];
+      }
+      
+      // Nur aktualisieren wenn sich etwas geändert hat
+      const oldValidUntil = currentSetting.validUntil;
+      if (oldValidUntil !== newValidUntil) {
+        await currentSetting.update({ validUntil: newValidUntil });
+        adjustedCount++;
+        
+        adjustments.push({
+          id: currentSetting.id,
+          description: currentSetting.description,
+          validFrom: currentSetting.validFrom,
+          oldValidUntil: oldValidUntil || 'unbegrenzt',
+          newValidUntil: newValidUntil || 'unbegrenzt'
+        });
+      }
+    }
+
+    // Aktive Einstellungen aktualisieren
+    await MinijobSetting.updateActiveStatus();
+
+    console.log(`✅ Neuberechnung abgeschlossen: ${adjustedCount} Einstellungen angepasst`);
+
+    res.json({
+      message: `Zeiträume erfolgreich neu berechnet - ${adjustedCount} Anpassungen vorgenommen`,
+      adjustedCount: adjustedCount,
+      adjustments: adjustments
+    });
+  } catch (error) {
+    console.error('Fehler bei der Neuberechnung:', error);
+    res.status(500).json({ error: 'Neuberechnung fehlgeschlagen' });
+  }
+});
+
+// ===== DATABASE RESET ROUTES =====
+
+// DATENBANK KOMPLETT RESETTEN (nur Admin)
+app.post('/api/admin/reset-database', requireAdmin, async (req, res) => {
+  try {
+    console.log(`🔄 Admin ${req.user.email} startet Database Reset...`);
+    
+    // 1. Alle Minijob-Einstellungen löschen
+    await MinijobSetting.destroy({ where: {} });
+    console.log('✅ Alle Minijob-Einstellungen gelöscht');
+    
+    // 2. Alle User außer dem aktuellen Admin löschen
+    await User.destroy({ 
+      where: { 
+        id: { [Sequelize.Op.ne]: req.user.userId } 
+      } 
+    });
+    console.log('✅ Alle User außer aktuellem Admin gelöscht');
+    
+    // 3. Aktuellen Admin auf Standard-Werte zurücksetzen (optional)
+    const currentAdmin = await User.findByPk(req.user.userId);
+    if (currentAdmin) {
+      await currentAdmin.update({
+        stundenlohn: 12.00,
+        abrechnungStart: 1,
+        abrechnungEnde: 31,
+        lohnzettelEmail: null
+      });
+      console.log('✅ Admin-Einstellungen auf Standard zurückgesetzt');
+    }
+    
+    // 4. Standard Minijob-Einstellung erstellen
+    const standardMinijobSetting = await MinijobSetting.create({
+      monthlyLimit: 538.00,
+      description: 'Standard Minijob-Grenze (Stand 2024)',
+      validFrom: '2024-01-01',
+      validUntil: null,
+      createdBy: req.user.userId
+    });
+    console.log('✅ Standard Minijob-Einstellung erstellt');
+    
+    // 5. Aktive Einstellungen aktualisieren
+    await MinijobSetting.updateActiveStatus();
+    
+    console.log(`🎉 Database Reset abgeschlossen von Admin ${req.user.email}`);
+    
+    res.json({
+      message: 'Datenbank erfolgreich zurückgesetzt',
+      details: {
+        adminBeibehalten: {
+          id: currentAdmin?.id,
+          email: currentAdmin?.email,
+          name: currentAdmin?.name
+        },
+        standardMinijobSetting: {
+          limit: standardMinijobSetting.monthlyLimit,
+          description: standardMinijobSetting.description
+        },
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Fehler beim Database Reset:', error);
+    res.status(500).json({ 
+      error: 'Database Reset fehlgeschlagen',
+      details: error.message 
+    });
+  }
+});
+
+// SICHERE DATABASE RESET ROUTE MIT BESTÄTIGUNG
+app.post('/api/admin/reset-database-confirm', requireAdmin, async (req, res) => {
+  const { confirmation } = req.body;
+  
+  // Sicherheitsbestätigung erforderlich
+  if (confirmation !== 'RESET_ALL_DATA_CONFIRM') {
+    return res.status(400).json({ 
+      error: 'Bestätigung erforderlich',
+      requiredConfirmation: 'RESET_ALL_DATA_CONFIRM' 
+    });
+  }
+  
+  try {
+    console.log(`🔄 BESTÄTIGTER Database Reset von Admin ${req.user.email}`);
+    
+    // Alle Tabellen leeren
+    await MinijobSetting.destroy({ where: {} });
+    await User.destroy({ where: {} });
+    
+    // Neuen Admin erstellen
+    const newAdmin = await User.create({
+      email: 'admin@schoppmann.de',
+      password: 'Admin123!',
+      name: 'Administrator',
+      role: 'admin',
+      isActive: true
+    });
+    
+    // Standard Minijob-Einstellung
+    await MinijobSetting.create({
+      monthlyLimit: 538.00,
+      description: 'Standard Minijob-Grenze (Stand 2024)',
+      validFrom: '2024-01-01',
+      validUntil: null,
+      createdBy: newAdmin.id
+    });
+    
+    await MinijobSetting.updateActiveStatus();
+    
+    console.log('🎉 Kompletter Database Reset mit neuem Admin abgeschlossen');
+    
+    res.json({
+      message: 'Datenbank komplett zurückgesetzt - Bitte erneut einloggen',
+      newAdminCredentials: {
+        email: 'admin@schoppmann.de',
+        password: 'Admin123!'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Fehler beim kompletten Reset:', error);
+    res.status(500).json({ error: 'Reset fehlgeschlagen' });
   }
 });
 
